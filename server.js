@@ -18,7 +18,7 @@ if (HF_TOKEN) {
     // Inicijaliziramo klijent s Tokenom I forsiramo Router URL
     hf = new HfInference({
         accessToken: HF_TOKEN,
-        endpointUrl: 'https://router.huggingface.co/api/', // OVO JE KLJUČNO ZA ZAOBILAŽENJE STARE GREŠKE
+        endpointUrl: 'https://router.huggingface.co/api/', // OVO FORSIRA ROUTER API
     });
     console.log("Hugging Face klijent uspješno inicijaliziran na Router API.");
 } else {
@@ -37,7 +37,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json()); 
 
 // =========================================================
-// 3. API RUTA: Procesiranje Teksta (Sentiment Analiza)
+// 3. API RUTA: Procesiranje Teksta (GENERIRANJE TEKSTA)
 // =========================================================
 
 app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
@@ -50,37 +50,27 @@ app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
     const textInput = req.body.text_input;
     
     if (!textInput || textInput.length === 0) {
-        return res.status(400).json({ error: 'Potreban je tekst za analizu.' });
+        return res.status(400).json({ error: 'Potreban je tekst za generiranje.' });
     }
 
     try {
-        // Koristimo službenu funkciju textClassification
-        const hfResponse = await hf.textClassification({
-            model: 'distilbert-base-uncased-finetuned-sst-2-english',
+        // 🚨 NOVO: Koristimo Text Generation s GPT2 modelom 🚨
+        const hfResponse = await hf.textGeneration({
+            model: 'gpt2', 
             inputs: textInput,
+            parameters: { 
+                max_new_tokens: 50, // Ograničavamo generiranje na 50 novih tokena
+                waitForModel: true  // Čekaj ako se model učitava
+            }
         });
 
-        // Parsiranje rezultata (Sentiment Analiza)
-        const positiveResult = hfResponse.find(r => r.label === "POSITIVE");
-        const negativeResult = hfResponse.find(r => r.label === "NEGATIVE");
-        
-        let sentimentLabel = "Neutralno";
-        let score = 0;
-
-        if (positiveResult && negativeResult) {
-            if (positiveResult.score > negativeResult.score) {
-                sentimentLabel = "Pozitivno";
-                score = positiveResult.score;
-            } else {
-                sentimentLabel = "Negativno";
-                score = negativeResult.score;
-            }
-        }
+        // Parsiranje rezultata za Text Generation
+        const generatedText = hfResponse.generated_text;
         
         // VRAĆANJE TEKSTUALNOG REZULTATA KLIJENTU
         res.json({
-            status: "Analiza uspješna!",
-            rezultat_tekst: `Sentiment: ${sentimentLabel} (Pouzdanost: ${(score * 100).toFixed(2)}%)`
+            status: "Generiranje uspješno!",
+            rezultat_tekst: `Vaš prompt: "${textInput}". Generirani nastavak: ${generatedText.substring(textInput.length).trim()}`
         });
 
     } catch (error) {
@@ -91,7 +81,7 @@ app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
         
         // Vraćamo detalje o grešci natrag klijentu
         res.status(500).json({ 
-            error: 'Greška pri analizi sentimenta (HF klijent).',
+            error: 'Greška pri generiranju teksta (HF klijent).',
             detalji: errorDetails
         });
     }
