@@ -11,9 +11,9 @@ const app = express();
 const PORT = process.env.PORT || 3000; 
 const HF_TOKEN = process.env.HF_TOKEN || process.env.HF_API_TOKEN; 
 
-// 🚨 NOVI, SLUŽBENI HUGGING FACE INFERENCE API ENDPOINT 🚨
-// Ovo je URL za standardni DistilBERT sentiment model.
-const HF_API_URL = "https://api-inference.huggingface.co/models/distilbert-base-uncased-finetuned-sst-2-english"; 
+// 🚨 NOVI, SLUŽBENI HUGGING FACE ROUTER ENDPOINT 🚨
+// Promijenjen api-inference.huggingface.co u router.huggingface.co
+const HF_API_URL = "https://router.huggingface.co/models/distilbert-base-uncased-finetuned-sst-2-english"; 
 
 // Budući da ne šaljemo slike, koristimo jednostavan upload middleware za tekst
 const upload = multer(); 
@@ -32,9 +32,9 @@ app.use(express.json());
 // RUTA se zove /procesiraj-frizuru radi kompatibilnosti, ali obrađuje tekst
 app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
     
-    // 🚨 PAŽNJA: Serverless Inference API zahtijeva HF_TOKEN!
+    // Serverless Inference API zahtijeva HF_TOKEN!
     if (!HF_TOKEN) {
-        return res.status(500).json({ error: 'HF_TOKEN nije postavljen na serveru.' });
+        return res.status(500).json({ error: 'HF_TOKEN nije postavljen na serveru. Postavite ga kao okolišnu varijablu.' });
     }
 
     const textInput = req.body.text_input;
@@ -48,7 +48,7 @@ app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
         const inferencePayload = {
             "inputs": textInput,
             "parameters": {
-                "wait_for_model": true // Čekaj dok se model ne probudi (ako je u ZeroGPU modu)
+                "wait_for_model": true 
             }
         };
         
@@ -58,7 +58,7 @@ app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
                 'Authorization': `Bearer ${HF_TOKEN}`, 
                 'Content-Type': 'application/json',
             },
-            timeout: 60000 // 60 sekundi (model se mora probuditi)
+            timeout: 60000 
         });
 
         // Vađenje rezultata iz JSON odgovora
