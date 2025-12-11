@@ -1,7 +1,8 @@
 const express = require('express');
 const multer = require('multer'); 
-const axios = require('axios');
 const path = require('path');
+// 🚨 NOVI MODUL: Službeni Hugging Face Inference Klijent
+const { HfInference } = require('@huggingface/inference'); 
 const app = express();
 
 // =========================================================
@@ -9,20 +10,21 @@ const app = express();
 // =========================================================
 
 const PORT = process.env.PORT || 3000; 
-// Ključni dio: prihvaća HF_TOKEN ili HF_API_TOKEN
 const HF_TOKEN = process.env.HF_TOKEN || process.env.HF_API_TOKEN; 
 
-// FINALNI URL: Sentiment Model na OBAVEZNOM Router API-ju
-const HF_API_URL = "https://router.huggingface.co/models/distilbert-base-uncased-finetuned-sst-2-english"; 
+// Inicijalizacija klijenta s Tokenom
+if (!HF_TOKEN) {
+    console.error("FATAL: HF_TOKEN nije postavljen. Ne mogu pokrenuti HF klijent.");
+}
+// Klijent automatski zna koje API-je koristiti
+const hf = new HfInference(HF_TOKEN);
 
-// Konfiguracija za multer
 const upload = multer(); 
 
 // =========================================================
 // 2. MIDDLEWARE & STATIČNI FIZLOVI
 // =========================================================
 
-// Poslužuje sve iz 'public' foldera
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json()); 
 
@@ -30,12 +32,11 @@ app.use(express.json());
 // 3. API RUTA: Procesiranje Teksta
 // =========================================================
 
-// Koristi upload.none() jer ne šaljemo fajlove, već samo tekst iz forme
 app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
     
-    // Provjera Tokena
+    // Provjera Tokena (ponovno)
     if (!HF_TOKEN) {
-        return res.status(500).json({ error: 'HF_TOKEN nije postavljen na serveru. Postavite ga kao okolišnu varijablu.' });
+        return res.status(500).json({ error: 'HF_TOKEN nije postavljen na serveru.' });
     }
 
     const textInput = req.body.text_input;
@@ -45,29 +46,16 @@ app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
     }
 
     try {
-        // Kreiranje payloada za Sentiment Analizu
-        const inferencePayload = {
-            "inputs": textInput,
-            "parameters": {
-                "wait_for_model": true 
-            }
-        };
-        
-        // Slanje zahtjeva na Hugging Face Router API
-        const hfResponse = await axios.post(HF_API_URL, inferencePayload, {
-            headers: {
-                'Authorization': `Bearer ${HF_TOKEN}`, 
-                'Content-Type': 'application/json',
-            },
-            timeout: 60000 // 60 sekundi timeout
+        // Koristimo SLUŽBENU funkciju za Sentiment Analizu
+        const hfResponse = await hf.sentimentAnalysis({
+            model: 'distilbert-base-uncased-finetuned-sst-2-english',
+            inputs: textInput,
         });
 
-        // Parsiranje rezultata (očekuje se [[{"label": "POSITIVE", "score": 0.999}]] format)
-        const resultList = hfResponse.data[0];
-        const positiveResult = resultList.find(r => r.label === "POSITIVE");
-        const negativeResult = resultList.find(r => r.label === "NEGATIVE");
+        // Parsiranje rezultata od službenog klijenta (Format je drugačiji, ali čist)
+        const positiveResult = hfResponse.find(r => r.label === "POSITIVE");
+        const negativeResult = hfResponse.find(r => r.label === "NEGATIVE");
         
-        // Određivanje finalnog sentimenta
         let sentimentLabel = "Neutralno";
         let score = 0;
 
@@ -83,35 +71,18 @@ app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
         
         // VRAĆANJE TEKSTUALNOG REZULTATA KLIJENTU
         res.json({
-            status: "Analiza uspješna!",
+            status: "Analiza uspješna! (Koristeći službeni klijent)",
             rezultat_tekst: `Sentiment: ${sentimentLabel} (Pouzdanost: ${(score * 100).toFixed(2)}%)`
         });
 
     } catch (error) {
-        let errorDetails = error.message;
-        if (error.response && error.response.data) {
-             try {
-                // Pokušaj parsiranja Hugging Face JSON greške
-                errorDetails = JSON.stringify(error.response.data);
-             } catch (e) {
-                errorDetails = error.response.data.toString();
-             }
-        }
+        let errorDetails = error.message || "Nepoznata greška";
         
-        // Detektira grešku autorizacije
-        if (error.response && (error.response.status === 401 || error.response.status === 403)) {
-            errorDetails = "Token (HF_TOKEN) je nevažeći ili mu nedostaju dozvole za ovaj API."
-        }
-        
-        // Detektira 404 grešku
-        if (error.response && error.response.status === 404) {
-            errorDetails = "Model nije pronađen na router.huggingface.co. Token je nevažeći ili je putanja kriva."
-        }
-
-        console.error("HF Error:", errorDetails);
+        // U službenom klijentu greška će biti jasnija
+        console.error("HF Client Error:", error.response || error.message);
         
         res.status(500).json({ 
-            error: 'Greška pri analizi sentimenta na Hugging Face API-ju.',
+            error: 'Greška pri analizi sentimenta (HF klijent).',
             detalji: errorDetails
         });
     }
@@ -120,14 +91,12 @@ app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
 
 // RUTA: Glavna ruta - Poslužuje HTML
 app.get('/', (req, res) => {
-    // Poslužuje index.html iz public foldera (potvrđeno da je ispravno)
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // =========================================================
 // 4. POKRETANJE SERVERA
 // =========================================================
-// Sluša na portu koji je odredio Render
 app.listen(PORT, () => {
     console.log(`Server sluša na portu ${PORT}`);
 });
