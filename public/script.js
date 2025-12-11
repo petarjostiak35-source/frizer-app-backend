@@ -7,22 +7,20 @@ document.getElementById('forma-frizura').addEventListener('submit', async functi
     const button = document.getElementById('generateButton');
     const rezultatDiv = document.getElementById('rezultat');
     
-    // Provjera minimalnog uvjeta na frontendu prije slanja (za bolji UX)
-    const sourceFile = document.getElementById('inputSource').files.length > 0;
-    const shapeFile = document.getElementById('inputShape').files.length > 0;
-    const colorFile = document.getElementById('inputColor').files.length > 0;
-
-    if (!sourceFile || (!shapeFile && !colorFile)) {
-        rezultatDiv.innerHTML = '<p class="error">⚠️ Molimo uploadajte sliku lica i barem jednu sliku za oblik ili boju.</p>';
+    // Dohvaćanje tekstualnog inputa
+    const textInput = formData.get('text_input');
+    
+    if (!textInput) {
+        rezultatDiv.innerHTML = '<p class="error">⚠️ Molimo unesite tekst za analizu.</p>';
         return;
     }
     
-    button.textContent = 'Obrada u tijeku...';
+    button.textContent = 'Analiziram sentiment...';
     button.disabled = true;
     rezultatDiv.innerHTML = '<p>Molimo pričekajte...</p>';
     
     try {
-        // 1. Slanje zahtjeva na VAŠ Render Backend
+        // Slanje zahtjeva na VAŠ Render Backend
         const response = await fetch('/procesiraj-frizuru', {
             method: 'POST',
             body: formData 
@@ -31,13 +29,13 @@ document.getElementById('forma-frizura').addEventListener('submit', async functi
         const data = await response.json();
 
         if (response.ok) {
-            // Uspješno primljena Base64 slika
+            // Uspješno primljen tekstualni rezultat
             rezultatDiv.innerHTML = `
-                <p>Status: Uspješno generirano!</p>
-                <img id="generated-image" src="${data.slika_base64}" alt="Generirana frizura" />
+                <p>Status: Analiza završena!</p>
+                <p>Rezultat: <strong>${data.rezultat_tekst}</strong></p>
             `;
         } else {
-            // Greška (npr. 400 ili 500)
+            // Greška 
             rezultatDiv.innerHTML = `<p class="error">Greška: ${data.error || 'Nepoznata greška'}</p>`;
             if (data.detalji) {
                  rezultatDiv.innerHTML += `<p>Detalji: ${data.detalji}</p>`;
@@ -47,7 +45,7 @@ document.getElementById('forma-frizura').addEventListener('submit', async functi
     } catch (error) {
         rezultatDiv.innerHTML = `<p class="error">Greška u komunikaciji: Server je nedostupan.</p>`;
     } finally {
-        button.textContent = 'Zamijeni Frizuru/Boju';
+        button.textContent = 'Analiziraj Tekst';
         button.disabled = false;
     }
 });
