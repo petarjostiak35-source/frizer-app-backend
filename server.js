@@ -11,8 +11,8 @@ const app = express();
 const PORT = process.env.PORT || 3000; 
 const HF_TOKEN = process.env.HF_TOKEN || process.env.HF_API_TOKEN; 
 
-// STABILNI FALLBACK: GPT2 text-generation model 
-const HF_API_URL = "https://api-inference.huggingface.co/models/gpt2"; 
+// 🚨 NOVI, ISPRAVNI URL: GPT2 na Routeru 🚨
+const HF_API_URL = "https://router.huggingface.co/models/gpt2"; 
 
 // Budući da ne šaljemo slike, koristimo jednostavan upload middleware za tekst
 const upload = multer(); 
@@ -51,6 +51,7 @@ app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
             }
         };
         
+        // 
         const hfResponse = await axios.post(HF_API_URL, inferencePayload, {
             headers: {
                 'Authorization': `Bearer ${HF_TOKEN}`, 
