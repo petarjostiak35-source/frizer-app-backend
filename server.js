@@ -11,10 +11,18 @@ const app = express();
 const PORT = process.env.PORT || 3000; 
 const HF_TOKEN = process.env.HF_TOKEN || process.env.HF_API_TOKEN; 
 
-// 🚨 NOVI, STABILNI FALLBACK: GPT2 text-generation model 🚨
+// STABILNI FALLBACK: GPT2 text-generation model 
 const HF_API_URL = "https://api-inference.huggingface.co/models/gpt2"; 
 
-// ... (ostatak koda je isti: upload = multer(), middleware, itd.) ...
+// Budući da ne šaljemo slike, koristimo jednostavan upload middleware za tekst
+const upload = multer(); 
+
+// =========================================================
+// 2. MIDDLEWARE & STATIČNI FIZLOVI
+// =========================================================
+
+app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.json()); 
 
 // =========================================================
 // 3. API RUTA: Procesiranje Teksta
@@ -24,7 +32,7 @@ app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
     
     // Provjera TOKEN-a je ključna za Inference API!
     if (!HF_TOKEN) {
-        return res.status(500).json({ error: 'HF_TOKEN nije postavljen na serveru. Ako je token neispravan, API će često vratiti "Not Found" ili 401/403.' });
+        return res.status(500).json({ error: 'HF_TOKEN nije postavljen na serveru. Ako je token neispravan, API će često vratiti grešku 401/403.' });
     }
 
     const textInput = req.body.text_input;
@@ -75,7 +83,7 @@ app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
              }
         }
         
-        // 🚨 Dodatna provjera za TOKEN
+        // Dodatna provjera za TOKEN
         if (error.response && (error.response.status === 401 || error.response.status === 403)) {
             errorDetails = "Token (HF_TOKEN) je nevažeći ili mu nedostaju dozvole za ovaj API."
         }
@@ -90,11 +98,14 @@ app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
 });
 
 
-// ... (ostatak koda: app.get('/', ... i app.listen(PORT, ... su isti) ...
+// RUTA: Glavna ruta - Poslužuje HTML
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// =========================================================
+// 4. POKRETANJE SERVERA
+// =========================================================
 app.listen(PORT, () => {
     console.log(`Server sluša na portu ${PORT}`);
 });
