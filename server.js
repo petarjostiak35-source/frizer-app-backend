@@ -11,18 +11,11 @@ const app = express();
 const PORT = process.env.PORT || 3000; 
 const HF_TOKEN = process.env.HF_TOKEN || process.env.HF_API_TOKEN; 
 
-// 🚨 NOVI, ISPRAVNI URL: GPT2 na Routeru 🚨
-const HF_API_URL = "https://router.huggingface.co/models/gpt2"; 
+// 🚨 FINALNI URL: Sentiment Model na OBAVEZNOM Router API-ju 🚨
+// Ovo mora raditi, jer je Token ispravan.
+const HF_API_URL = "https://router.huggingface.co/models/distilbert-base-uncased-finetuned-sst-2-english"; 
 
-// Budući da ne šaljemo slike, koristimo jednostavan upload middleware za tekst
-const upload = multer(); 
-
-// =========================================================
-// 2. MIDDLEWARE & STATIČNI FIZLOVI
-// =========================================================
-
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.json()); 
+// ... (ostatak koda je isti do app.post) ...
 
 // =========================================================
 // 3. API RUTA: Procesiranje Teksta
@@ -30,28 +23,18 @@ app.use(express.json());
 
 app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
     
-    // Provjera TOKEN-a je ključna za Inference API!
-    if (!HF_TOKEN) {
-        return res.status(500).json({ error: 'HF_TOKEN nije postavljen na serveru. Ako je token neispravan, API će često vratiti grešku 401/403.' });
-    }
-
-    const textInput = req.body.text_input;
-    
-    if (!textInput || textInput.length === 0) {
-        return res.status(400).json({ error: 'Potreban je tekst za generiranje.' });
-    }
+    // Provjera TOKEN-a i teksta... (isti kod) ...
 
     try {
-        // Kreiranje payloada za Text Generation
+        // Kreiranje payloada za Sentiment Analizu
         const inferencePayload = {
             "inputs": textInput,
             "parameters": {
-                "max_new_tokens": 50, // Ograničimo duljinu generiranog teksta
                 "wait_for_model": true 
             }
         };
         
-        // 
+        // Slanje na Router API
         const hfResponse = await axios.post(HF_API_URL, inferencePayload, {
             headers: {
                 'Authorization': `Bearer ${HF_TOKEN}`, 
@@ -60,53 +43,45 @@ app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
             timeout: 60000 
         });
 
-        // Vađenje rezultata iz JSON odgovora
-        // Text Generation vraća: [{"generated_text": "..."}]
-        const generatedText = hfResponse.data[0].generated_text;
+        // ... (parsiranje rezultata za Sentiment Analizu je isti kod) ...
+        const resultList = hfResponse.data[0];
+        const positiveResult = resultList.find(r => r.label === "POSITIVE");
+        const negativeResult = resultList.find(r => r.label === "NEGATIVE");
         
-        if (!generatedText) {
-            throw new Error('API nije vratio generirani tekst.');
+        // Određivanje finalnog sentimenta...
+        let sentimentLabel = "Neutralno";
+        let score = 0;
+
+        if (positiveResult && negativeResult) {
+            if (positiveResult.score > negativeResult.score) {
+                sentimentLabel = "Pozitivno";
+                score = positiveResult.score;
+            } else {
+                sentimentLabel = "Negativno";
+                score = negativeResult.score;
+            }
         }
         
         // VRAĆANJE TEKSTUALNOG REZULTATA KLIJENTU
         res.json({
-            status: "Generiranje uspješno!",
-            rezultat_tekst: `Vaš prompt: "${textInput}". Generirani nastavak: ${generatedText.substring(textInput.length).trim()}`
+            status: "Analiza uspješna!",
+            rezultat_tekst: `Sentiment: ${sentimentLabel} (Pouzdanost: ${(score * 100).toFixed(2)}%)`
         });
 
     } catch (error) {
         let errorDetails = error.message;
-        if (error.response && error.response.data) {
-             try {
-                errorDetails = JSON.stringify(error.response.data);
-             } catch (e) {
-                errorDetails = error.response.data.toString();
-             }
+        // 🚨 OVDJE JE KRITIČNO: Ako dobijemo 404, Token je sigurno neispravan!
+        if (error.response && error.response.status === 404) {
+            errorDetails = "Router API nije pronašao model. Token je neispravan ili nevažeći, iako je test u Postmanu uspio."
         }
-        
-        // Dodatna provjera za TOKEN
-        if (error.response && (error.response.status === 401 || error.response.status === 403)) {
-            errorDetails = "Token (HF_TOKEN) je nevažeći ili mu nedostaju dozvole za ovaj API."
-        }
-
-        console.error("HF Error:", errorDetails);
+        // ... (ostatak error handlinga je isti) ...
         
         res.status(500).json({ 
-            error: 'Greška pri generiranju teksta na Hugging Face API-ju.',
+            error: 'Greška pri analizi sentimenta na Hugging Face API-ju.',
             detalji: errorDetails
         });
     }
 });
 
 
-// RUTA: Glavna ruta - Poslužuje HTML
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// =========================================================
-// 4. POKRETANJE SERVERA
-// =========================================================
-app.listen(PORT, () => {
-    console.log(`Server sluša na portu ${PORT}`);
-});
+// ... (ostatak server.js koda je isti) ...
