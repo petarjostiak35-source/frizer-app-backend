@@ -15,7 +15,7 @@ const HF_TOKEN = process.env.HF_TOKEN || process.env.HF_API_TOKEN;
 // URL za HairFastGAN Space
 const HF_API_URL = "https://airi-institute-hairfastgan.hf.space/api/predict"; 
 
-// Konfiguracija Multera za prihvat VIŠE FAJLOVA
+// Konfiguracija Multera
 const imageFields = [
     { name: 'source', maxCount: 1 }, 
     { name: 'shape', maxCount: 1 },  
@@ -52,7 +52,6 @@ app.post('/procesiraj-frizuru', upload.fields(imageFields), async (req, res) => 
 
     const { source, shape, color } = req.files;
     
-    // Provjera minimalnog uvjeta: Potrebno je LICE i BAREM JEDNA od frizura/boja.
     if (!source || source.length === 0 || (!shape && !color)) {
         return res.status(400).json({ error: 'Potrebna je slika lica (Source) i barem slika oblika (Shape) ili slika boje (Color).' });
     }
@@ -68,17 +67,17 @@ app.post('/procesiraj-frizuru', upload.fields(imageFields), async (req, res) => 
     if (color && color.length > 0) tempFilesToClean.push(color[0].path);
 
     try {
-        // 🚨 KLJUČNA IZMJENA V4: Slanje samo Base64 stringova ili null
+        // 🚨 V6 ISPRAVKA: Uključenje 3 parametra s defaultnim vrijednostima za ukupno 6 inputa
         const gradioPayload = {
             "fn_name": "swap_hair", 
             "data": [
-                faceBase64,
-                shapeBase64, 
-                colorBase64, 
-                'Article',  
-                0,          
-                15,         
-            ],
+                faceBase64,  // 1. Slika Lica
+                shapeBase64, // 2. Slika Oblika (ili null)
+                colorBase64, // 3. Slika Boje (ili null)
+                'Article',   // 4. blending (Default)
+                0,           // 5. poisson_iters (Default)
+                15,          // 6. poisson_erosion (Default)
+            ], 
             "session_hash": "gradio_session_" + Math.random().toString(36).substring(2, 10) 
         };
         
@@ -90,7 +89,7 @@ app.post('/procesiraj-frizuru', upload.fields(imageFields), async (req, res) => 
             timeout: 60000 
         });
 
-        // Vađenje Base64 stringa iz JSON odgovora (Gradio V4 format)
+        // Vađenje Base64 stringa iz JSON odgovora
         const resultData = hfResponse.data.data[0];
         const finalImageBase64 = resultData && resultData.data ? resultData.data : null; 
 
@@ -108,8 +107,10 @@ app.post('/procesiraj-frizuru', upload.fields(imageFields), async (req, res) => 
         let errorDetails = "Internal Server Error";
         if (error.response && error.response.data) {
              try {
+                // Pokušaj parsiranja Gradiovog JSON odgovora greške
                 errorDetails = JSON.stringify(error.response.data);
              } catch (e) {
+                // Ako nije JSON, vrati cijeli odgovor kao string
                 errorDetails = error.response.data.toString();
              }
         } else if (error.message) {
