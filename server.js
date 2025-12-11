@@ -12,12 +12,15 @@ const app = express();
 const PORT = process.env.PORT || 3000; 
 const HF_TOKEN = process.env.HF_TOKEN || process.env.HF_API_TOKEN; 
 
-// 🚨 SIGURNOSNA INICIJALIZACIJA (Kritično za sprječavanje rušenja) 🚨
+// 🚨 KRITIČNA INICIJALIZACIJA (Forsiranje Router API-ja) 🚨
 let hf = null;
 if (HF_TOKEN) {
-    // Inicijalizira klijent SAMO ako je Token dostupan
-    hf = new HfInference(HF_TOKEN);
-    console.log("Hugging Face klijent uspješno inicijaliziran.");
+    // Inicijaliziramo klijent s Tokenom I forsiramo Router URL
+    hf = new HfInference({
+        accessToken: HF_TOKEN,
+        endpointUrl: 'https://router.huggingface.co/api/', // OVO JE KLJUČNO ZA ZAOBILAŽENJE STARE GREŠKE
+    });
+    console.log("Hugging Face klijent uspješno inicijaliziran na Router API.");
 } else {
     console.error("KRITIČNA GREŠKA: HF_TOKEN nije postavljen. API pozivi neće raditi.");
 }
@@ -39,7 +42,7 @@ app.use(express.json());
 
 app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
     
-    // 🚨 PROVJERA PRIJE API POZIVA: Je li klijent uopće inicijaliziran?
+    // Provjera prije API poziva: Je li klijent uopće inicijaliziran?
     if (!hf) {
         return res.status(500).json({ error: 'HF klijent nije inicijaliziran. Provjerite je li HF_TOKEN postavljen na Renderu.' });
     }
@@ -86,6 +89,7 @@ app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
         // Ispis greške u konzolu
         console.error("HF Client Error:", error.response || error.message);
         
+        // Vraćamo detalje o grešci natrag klijentu
         res.status(500).json({ 
             error: 'Greška pri analizi sentimenta (HF klijent).',
             detalji: errorDetails
