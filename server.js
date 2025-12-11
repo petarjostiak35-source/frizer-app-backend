@@ -1,6 +1,7 @@
 const express = require('express');
 const multer = require('multer'); 
 const path = require('path');
+// Import službenog Hugging Face Inference Klijenta
 const { HfInference } = require('@huggingface/inference'); 
 const app = express();
 
@@ -11,14 +12,26 @@ const app = express();
 const PORT = process.env.PORT || 3000; 
 const HF_TOKEN = process.env.HF_TOKEN || process.env.HF_API_TOKEN; 
 
-// 🚨 ČISTA INICIJALIZACIJA: Neka klijent sam odredi Router API putanju 🚨
-if (!HF_TOKEN) {
-    console.warn("Upozorenje: HF_TOKEN nije postavljen.");
+// 🚨 SIGURNOSNA INICIJALIZACIJA (Kritično za sprječavanje rušenja) 🚨
+let hf = null;
+if (HF_TOKEN) {
+    // Inicijalizira klijent SAMO ako je Token dostupan
+    hf = new HfInference(HF_TOKEN);
+    console.log("Hugging Face klijent uspješno inicijaliziran.");
+} else {
+    console.error("KRITIČNA GREŠKA: HF_TOKEN nije postavljen. API pozivi neće raditi.");
 }
-const hf = new HfInference(HF_TOKEN); // Nema endpointUrl!
 
+// Middleware za obradu teksta
 const upload = multer(); 
-// ... (ostatak koda je isti: middleware) ...
+
+// =========================================================
+// 2. MIDDLEWARE & STATIČNI FIZLOVI
+// =========================================================
+
+// Poslužuje sve datoteke iz 'public' foldera
+app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.json()); 
 
 // =========================================================
 // 3. API RUTA: Procesiranje Teksta (Sentiment Analiza)
@@ -26,7 +39,16 @@ const upload = multer();
 
 app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
     
-    // ... (provjera Tokena i textInput su isti) ...
+    // 🚨 PROVJERA PRIJE API POZIVA: Je li klijent uopće inicijaliziran?
+    if (!hf) {
+        return res.status(500).json({ error: 'HF klijent nije inicijaliziran. Provjerite je li HF_TOKEN postavljen na Renderu.' });
+    }
+
+    const textInput = req.body.text_input;
+    
+    if (!textInput || textInput.length === 0) {
+        return res.status(400).json({ error: 'Potreban je tekst za analizu.' });
+    }
 
     try {
         // Koristimo službenu funkciju textClassification
@@ -35,8 +57,24 @@ app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
             inputs: textInput,
         });
 
-        // ... (parsiranje rezultata je isto) ...
+        // Parsiranje rezultata (Sentiment Analiza)
+        const positiveResult = hfResponse.find(r => r.label === "POSITIVE");
+        const negativeResult = hfResponse.find(r => r.label === "NEGATIVE");
         
+        let sentimentLabel = "Neutralno";
+        let score = 0;
+
+        if (positiveResult && negativeResult) {
+            if (positiveResult.score > negativeResult.score) {
+                sentimentLabel = "Pozitivno";
+                score = positiveResult.score;
+            } else {
+                sentimentLabel = "Negativno";
+                score = negativeResult.score;
+            }
+        }
+        
+        // VRAĆANJE TEKSTUALNOG REZULTATA KLIJENTU
         res.json({
             status: "Analiza uspješna!",
             rezultat_tekst: `Sentiment: ${sentimentLabel} (Pouzdanost: ${(score * 100).toFixed(2)}%)`
@@ -45,7 +83,7 @@ app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
     } catch (error) {
         let errorDetails = error.message || "Nepoznata greška";
         
-        // Greška će sada biti jasnija ako je vezana za providera
+        // Ispis greške u konzolu
         console.error("HF Client Error:", error.response || error.message);
         
         res.status(500).json({ 
@@ -55,4 +93,17 @@ app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
     }
 });
 
-// ... (ostatak koda je isti) ...
+
+// RUTA: Glavna ruta - Poslužuje HTML
+app.get('/', (req, res) => {
+    // Poslužuje index.html iz public foldera (provjereno da je ispravno)
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// =========================================================
+// 4. POKRETANJE SERVERA
+// =========================================================
+// Sluša na portu koji je odredio Render
+app.listen(PORT, () => {
+    console.log(`Server sluša na portu ${PORT}`);
+});
