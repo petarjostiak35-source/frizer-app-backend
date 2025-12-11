@@ -12,16 +12,11 @@ const app = express();
 const PORT = process.env.PORT || 3000; 
 const HF_TOKEN = process.env.HF_TOKEN || process.env.HF_API_TOKEN; 
 
-// URL za HairFastGAN Space
-const HF_API_URL = "https://airi-institute-hairfastgan.hf.space/api/predict"; 
+// 🚨 NOVI, STABILNI URL ZA TEKSTUALNU ANALIZU SENTIMENTA 🚨
+const HF_API_URL = "https://huggingface-api-predict-demo.hf.space/api/predict"; 
 
-// Konfiguracija Multera
-const imageFields = [
-    { name: 'source', maxCount: 1 }, 
-    { name: 'shape', maxCount: 1 },  
-    { name: 'color', maxCount: 1 }   
-];
-const upload = multer({ dest: 'uploads/' });
+// Budući da ne šaljemo slike, možemo koristiti jednostavan upload middleware za tekst
+const upload = multer(); // Bez dest: 'uploads/', jer ne spremamo fajlove
 
 // =========================================================
 // 2. MIDDLEWARE & STATIČNI FIZLOVI
@@ -30,53 +25,30 @@ const upload = multer({ dest: 'uploads/' });
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json()); 
 
-// Funkcija koja vraća Base64 string (data:image/...) ili null
-const fileToBase64 = (file) => {
-    // Vraća null ako fajl ne postoji, što Python očekuje za None
-    if (!file || !file.path) return null; 
-    
-    const fileContent = fs.readFileSync(file.path);
-    const mimeType = file.mimetype;
-    return `data:${mimeType};base64,${fileContent.toString('base64')}`;
-};
-
 // =========================================================
-// 3. API RUTA: Procesiranje frizure
+// 3. API RUTA: Procesiranje Teksta
 // =========================================================
 
-app.post('/procesiraj-frizuru', upload.fields(imageFields), async (req, res) => {
+// RUTA se zove /procesiraj-frizuru radi kompatibilnosti, ali obrađuje tekst
+app.post('/procesiraj-frizuru', upload.none(), async (req, res) => {
     
     if (!HF_TOKEN) {
         return res.status(500).json({ error: 'HF_TOKEN nije postavljen na serveru.' });
     }
 
-    const { source, shape, color } = req.files;
+    // Očekujemo 'text_input' iz frontend forme (formData)
+    const textInput = req.body.text_input;
     
-    if (!source || source.length === 0 || (!shape && !color)) {
-        return res.status(400).json({ error: 'Potrebna je slika lica (Source) i barem slika oblika (Shape) ili slika boje (Color).' });
+    if (!textInput || textInput.length === 0) {
+        return res.status(400).json({ error: 'Potreban je tekst za analizu.' });
     }
 
-    // Pretvorba fajlova u Base64 (koristeći null ako opcionalni fajl ne postoji)
-    const faceBase64 = fileToBase64(source[0]);
-    const shapeBase64 = shape && shape.length > 0 ? fileToBase64(shape[0]) : null;
-    const colorBase64 = color && color.length > 0 ? fileToBase64(color[0]) : null;
-    
-    // Polje privremenih fajlova za čišćenje
-    const tempFilesToClean = [source[0].path];
-    if (shape && shape.length > 0) tempFilesToClean.push(shape[0].path);
-    if (color && color.length > 0) tempFilesToClean.push(color[0].path);
-
     try {
-        // 🚨 V6 ISPRAVKA: Uključenje 3 parametra s defaultnim vrijednostima za ukupno 6 inputa
+        // Kreiranje payloada - šaljemo samo jedan tekstualni input
         const gradioPayload = {
-            "fn_name": "swap_hair", 
+            "fn_name": "predict", // Generička funkcija
             "data": [
-                faceBase64,  // 1. Slika Lica
-                shapeBase64, // 2. Slika Oblika (ili null)
-                colorBase64, // 3. Slika Boje (ili null)
-                'Article',   // 4. blending (Default)
-                0,           // 5. poisson_iters (Default)
-                15,          // 6. poisson_erosion (Default)
+                textInput, // Jedini input
             ], 
             "session_hash": "gradio_session_" + Math.random().toString(36).substring(2, 10) 
         };
@@ -86,48 +58,41 @@ app.post('/procesiraj-frizuru', upload.fields(imageFields), async (req, res) => 
                 'Authorization': `Bearer ${HF_TOKEN}`, 
                 'Content-Type': 'application/json',
             },
-            timeout: 60000 
+            timeout: 30000 // 30 sekundi (ovo je brže)
         });
 
-        // Vađenje Base64 stringa iz JSON odgovora
-        const resultData = hfResponse.data.data[0];
-        const finalImageBase64 = resultData && resultData.data ? resultData.data : null; 
-
-        if (!finalImageBase64) {
-            throw new Error('Gradio API nije vratio Base64 sliku u očekivanom formatu.');
-        }
+        // Vađenje rezultata iz JSON odgovora
+        // Gradio za text-to-text vraća: [ ["LABEL_1", 0.99] ]
+        const result = hfResponse.data.data[0];
         
-        // VRAĆANJE REZULTATA KLIJENTU
+        if (!result || !result.label) {
+            throw new Error('API nije vratio tekstualni rezultat u očekivanom formatu.');
+        }
+
+        // VRAĆANJE TEKSTUALNOG REZULTATA KLIJENTU
+        const sentimentLabel = result.label === "LABEL_1" ? "Positive" : "Negative";
+        const score = (result.conf * 100).toFixed(2);
+
         res.json({
-            status: "Uspješno generirano!",
-            slika_base64: finalImageBase64 
+            status: "Analiza uspješna!",
+            rezultat_tekst: `Sentiment: ${sentimentLabel} (Confidence: ${score}%)`
         });
 
     } catch (error) {
-        let errorDetails = "Internal Server Error";
+        let errorDetails = error.message;
         if (error.response && error.response.data) {
              try {
-                // Pokušaj parsiranja Gradiovog JSON odgovora greške
                 errorDetails = JSON.stringify(error.response.data);
              } catch (e) {
-                // Ako nije JSON, vrati cijeli odgovor kao string
                 errorDetails = error.response.data.toString();
              }
-        } else if (error.message) {
-            errorDetails = error.message;
         }
 
         console.error("HF Error:", errorDetails);
         
         res.status(500).json({ 
-            error: 'Greška pri obradi frizure na Hugging Face API-ju.',
+            error: 'Greška pri analizi sentimenta na Hugging Face API-ju.',
             detalji: errorDetails
-        });
-        
-    } finally {
-        // ČIŠĆENJE: Brisanje privremenih fajlova
-        tempFilesToClean.forEach(fPath => {
-             try { fs.unlinkSync(fPath); } catch (e) {}
         });
     }
 });
