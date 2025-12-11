@@ -32,7 +32,7 @@ app.use(express.json());
 
 // Funkcija koja vraća Base64 string (data:image/...) ili null
 const fileToBase64 = (file) => {
-    // Ako fajl ne postoji ili nema putanju, vrati null
+    // Vraća null ako fajl ne postoji, što Python očekuje za None
     if (!file || !file.path) return null; 
     
     const fileContent = fs.readFileSync(file.path);
@@ -52,11 +52,12 @@ app.post('/procesiraj-frizuru', upload.fields(imageFields), async (req, res) => 
 
     const { source, shape, color } = req.files;
     
+    // Provjera minimalnog uvjeta: Potrebno je LICE i BAREM JEDNA od frizura/boja.
     if (!source || source.length === 0 || (!shape && !color)) {
         return res.status(400).json({ error: 'Potrebna je slika lica (Source) i barem slika oblika (Shape) ili slika boje (Color).' });
     }
 
-    // Pretvorba fajlova u Base64 
+    // Pretvorba fajlova u Base64 (koristeći null ako opcionalni fajl ne postoji)
     const faceBase64 = fileToBase64(source[0]);
     const shapeBase64 = shape && shape.length > 0 ? fileToBase64(shape[0]) : null;
     const colorBase64 = color && color.length > 0 ? fileToBase64(color[0]) : null;
@@ -67,16 +68,13 @@ app.post('/procesiraj-frizuru', upload.fields(imageFields), async (req, res) => 
     if (color && color.length > 0) tempFilesToClean.push(color[0].path);
 
     try {
-        // 🚨 KLJUČNA ISPRAVKA: Korištenje JSON objekata za slikovne ulaze
+        // 🚨 KLJUČNA IZMJENA V4: Slanje samo Base64 stringova ili null
         const gradioPayload = {
             "fn_name": "swap_hair", 
             "data": [
-                // Format za sliku: { "name": ime_fajla, "data": base64_string }
-                // OBAVEZNA slika (Source):
-                { "name": source[0].filename, "data": faceBase64 }, 
-                // OPCIONALNE slike (Shape, Color) - šalje se objekt ili null
-                shapeBase64 ? { "name": shape[0].filename, "data": shapeBase64 } : null, 
-                colorBase64 ? { "name": color[0].filename, "data": colorBase64 } : null, 
+                faceBase64,
+                shapeBase64, 
+                colorBase64, 
                 'Article',  
                 0,          
                 15,         
@@ -110,10 +108,8 @@ app.post('/procesiraj-frizuru', upload.fields(imageFields), async (req, res) => 
         let errorDetails = "Internal Server Error";
         if (error.response && error.response.data) {
              try {
-                // Pokušaj parsiranja Gradiovog JSON odgovora greške
                 errorDetails = JSON.stringify(error.response.data);
              } catch (e) {
-                // Ako nije JSON, vrati cijeli odgovor kao string
                 errorDetails = error.response.data.toString();
              }
         } else if (error.message) {
