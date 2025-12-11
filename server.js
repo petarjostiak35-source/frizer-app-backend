@@ -12,14 +12,14 @@ const app = express();
 const PORT = process.env.PORT || 3000; 
 const HF_TOKEN = process.env.HF_TOKEN || process.env.HF_API_TOKEN; 
 
-// 🚨 NOVI ISPRAVLJENI URL: Za HairFastGAN Space
+// URL za HairFastGAN Space
 const HF_API_URL = "https://airi-institute-hairfastgan.hf.space/api/predict"; 
 
 // Konfiguracija Multera za prihvat VIŠE FAJLOVA
 const imageFields = [
-    { name: 'source', maxCount: 1 }, // Glavna slika lica (OBAVEZNA)
-    { name: 'shape', maxCount: 1 },  // Slika za oblik frizure (OPCIONALNA)
-    { name: 'color', maxCount: 1 }   // Slika za boju kose (OPCIONALNA)
+    { name: 'source', maxCount: 1 }, 
+    { name: 'shape', maxCount: 1 },  
+    { name: 'color', maxCount: 1 }   
 ];
 const upload = multer({ dest: 'uploads/' });
 
@@ -30,9 +30,9 @@ const upload = multer({ dest: 'uploads/' });
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json()); 
 
-// Funkcija za konverziju fajla u Base64 (potrebno za Gradio API)
+// 🚨 ISPRAVKA 1: Vraća "" umjesto null za nepostojeće fajlove
 const fileToBase64 = (file) => {
-    if (!file || !file.path) return null;
+    if (!file || !file.path) return ""; 
     const fileContent = fs.readFileSync(file.path);
     const mimeType = file.mimetype;
     return `data:${mimeType};base64,${fileContent.toString('base64')}`;
@@ -50,15 +50,14 @@ app.post('/procesiraj-frizuru', upload.fields(imageFields), async (req, res) => 
 
     const { source, shape, color } = req.files;
     
-    // Provjera MINIMALNOG uvjeta: Potrebno je LICE i BAREM JEDNA od frizura/boja.
     if (!source || source.length === 0 || (!shape && !color)) {
         return res.status(400).json({ error: 'Potrebna je slika lica (Source) i barem slika oblika (Shape) ili slika boje (Color).' });
     }
 
-    // Pretvorba fajlova u Base64 (ako postoje)
+    // Pretvorba fajlova u Base64 (koristeći ispravljenu funkciju koja vraća "")
     const faceBase64 = fileToBase64(source[0]);
-    const shapeBase64 = shape && shape.length > 0 ? fileToBase64(shape[0]) : null;
-    const colorBase64 = color && color.length > 0 ? fileToBase64(color[0]) : null;
+    const shapeBase64 = shape && shape.length > 0 ? fileToBase64(shape[0]) : "";
+    const colorBase64 = color && color.length > 0 ? fileToBase64(color[0]) : "";
 
     // Polje privremenih fajlova za čišćenje
     const tempFilesToClean = [source[0].path];
@@ -66,16 +65,15 @@ app.post('/procesiraj-frizuru', upload.fields(imageFields), async (req, res) => 
     if (color && color.length > 0) tempFilesToClean.push(color[0].path);
 
     try {
-        // 2. PRIPREMA JSON PAYLOAD-A (Gradio Format za funkciju swap_hair)
         const gradioPayload = {
-            "fn_name": "swap_hair", // 👈 NOVA FUNKCIJA
+            "fn_name": "swap_hair", 
             "data": [
                 faceBase64,
                 shapeBase64,
                 colorBase64,
-                'Article',  // 4. blending (Default)
-                0,          // 5. poisson_iters (Default)
-                15,         // 6. poisson_erosion (Default)
+                'Article',  
+                0,          
+                15,         
             ],
             "session_hash": "gradio_session_" + Math.random().toString(36).substring(2, 10) 
         };
@@ -86,25 +84,41 @@ app.post('/procesiraj-frizuru', upload.fields(imageFields), async (req, res) => 
                 'Authorization': `Bearer ${HF_TOKEN}`, 
                 'Content-Type': 'application/json',
             },
-            responseType: 'arraybuffer', // API vraća sliku, ne JSON!
-            timeout: 60000 // 60 sekundi za procesiranje slike
+            // responseType: 'arraybuffer' je UKLONJEN jer očekujemo JSON
+            timeout: 60000 
         });
 
-        // 4. PRIMANJE REZULTATA (slika, ne video)
-        const mimeType = hfResponse.headers['content-type'] || 'image/png';
-        const base64Image = Buffer.from(hfResponse.data, 'binary').toString('base64');
+        // 🚨 ISPRAVKA 2: Vađenje Base64 stringa iz JSON odgovora
+        // Gradio API vraća Base64 string unutar JSON objekta
+        const resultData = hfResponse.data.data[0];
+        // Base64 slika je u "data" polju, a Gradio je već formatirao (data:image/...)
+        const finalImageBase64 = resultData && resultData.data ? resultData.data : null; 
+
+        if (!finalImageBase64) {
+            throw new Error('Gradio API nije vratio Base64 sliku u očekivanom formatu.');
+        }
         
         // 5. VRAĆANJE REZULTATA KLIJENTU
         res.json({
             status: "Uspješno generirano!",
-            slika_base64: `data:${mimeType};base64,${base64Image}` // Format za prikaz
+            slika_base64: finalImageBase64 
         });
 
     } catch (error) {
-        console.error("HF Error:", error.response ? error.response.data.toString() : error.message);
+        // Detaljnije logiranje za 500 grešku
+        let errorDetails = "Internal Server Error";
+        if (error.response && error.response.data) {
+             // Ako je error.response.data JSON (npr. Gradio greška), prikaži ga
+             errorDetails = JSON.stringify(error.response.data);
+        } else if (error.message) {
+            errorDetails = error.message;
+        }
+
+        console.error("HF Error:", errorDetails);
+        
         res.status(500).json({ 
             error: 'Greška pri obradi frizure na Hugging Face API-ju.',
-            detalji: error.response ? error.response.data.toString() : error.message 
+            detalji: errorDetails
         });
         
     } finally {
