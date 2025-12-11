@@ -10,66 +10,73 @@ const app = express();
 // =========================================================
 
 const PORT = process.env.PORT || 3000; 
-
-// Token se čita iz Environment Variables
 const HF_TOKEN = process.env.HF_TOKEN || process.env.HF_API_TOKEN; 
 
-// 🚨 ISPRAVLJENI URL: Koristi se standardni Gradio V4 API endpoint
-const HF_API_URL = "https://obsxrver-wan2-2-i2v-lora-demo.hf.space/api/predict"; 
+// 🚨 NOVI ISPRAVLJENI URL: Za HairFastGAN Space
+const HF_API_URL = "https://airi-institute-hairfastgan.hf.space/api/predict"; 
 
-// Konfiguracija Multera
+// Konfiguracija Multera za prihvat VIŠE FAJLOVA
+const imageFields = [
+    { name: 'source', maxCount: 1 }, // Glavna slika lica (OBAVEZNA)
+    { name: 'shape', maxCount: 1 },  // Slika za oblik frizure (OPCIONALNA)
+    { name: 'color', maxCount: 1 }   // Slika za boju kose (OPCIONALNA)
+];
 const upload = multer({ dest: 'uploads/' });
 
 // =========================================================
 // 2. MIDDLEWARE & STATIČNI FIZLOVI
 // =========================================================
 
-// Posluživanje statičnih datoteka iz 'public' mape
 app.use(express.static(path.join(__dirname, 'public')));
-
 app.use(express.json()); 
 
+// Funkcija za konverziju fajla u Base64 (potrebno za Gradio API)
+const fileToBase64 = (file) => {
+    if (!file || !file.path) return null;
+    const fileContent = fs.readFileSync(file.path);
+    const mimeType = file.mimetype;
+    return `data:${mimeType};base64,${fileContent.toString('base64')}`;
+};
+
 // =========================================================
-// 3. API RUTE
+// 3. API RUTA: Procesiranje frizure
 // =========================================================
 
-// RUTA: Procesiranje videa (Proxy za Hugging Face)
-app.post('/procesiraj-video', upload.single('slika'), async (req, res) => {
+app.post('/procesiraj-frizuru', upload.fields(imageFields), async (req, res) => {
     
-    // Provjera autorizacije
     if (!HF_TOKEN) {
-        return res.status(500).json({ error: 'HF_TOKEN nije postavljen na serveru. Neophodan je za pristup API-ju.' });
+        return res.status(500).json({ error: 'HF_TOKEN nije postavljen na serveru.' });
     }
 
-    const fajl = req.file;   
-    const prompt = req.body.prompt; // Tekstualni opis iz forme
-
-    if (!fajl || !prompt) {
-        return res.status(400).json({ error: 'Potrebna je slika i prompt za generiranje videa.' });
+    const { source, shape, color } = req.files;
+    
+    // Provjera MINIMALNOG uvjeta: Potrebno je LICE i BAREM JEDNA od frizura/boja.
+    if (!source || source.length === 0 || (!shape && !color)) {
+        return res.status(400).json({ error: 'Potrebna je slika lica (Source) i barem slika oblika (Shape) ili slika boje (Color).' });
     }
+
+    // Pretvorba fajlova u Base64 (ako postoje)
+    const faceBase64 = fileToBase64(source[0]);
+    const shapeBase64 = shape && shape.length > 0 ? fileToBase64(shape[0]) : null;
+    const colorBase64 = color && color.length > 0 ? fileToBase64(color[0]) : null;
+
+    // Polje privremenih fajlova za čišćenje
+    const tempFilesToClean = [source[0].path];
+    if (shape && shape.length > 0) tempFilesToClean.push(shape[0].path);
+    if (color && color.length > 0) tempFilesToClean.push(color[0].path);
 
     try {
-        // 1. Čitanje i konverzija slike u Base64 (Format koji Gradio API očekuje)
-        const fileContent = fs.readFileSync(fajl.path).toString('base64');
-        const mimeType = fajl.mimetype;
-        const base64Image = `data:${mimeType};base64,${fileContent}`;
-        
-        // 2. PRIPREMA JSON PAYLOAD-A (Novi Gradio API Format)
+        // 2. PRIPREMA JSON PAYLOAD-A (Gradio Format za funkciju swap_hair)
         const gradioPayload = {
-            // 🚨 KLJUČNO: Moramo reći Gradiju koju funkciju da pozove
-            "fn_name": "generate_video", 
+            "fn_name": "swap_hair", // 👈 NOVA FUNKCIJA
             "data": [
-                base64Image,                        // 1. input_image (Base64)
-                prompt,                             // 2. prompt
-                6,                                  // 3. steps
-                "",                                 // 4. negative_prompt
-                4.0,                                // 5. duration_seconds
-                1,                                  // 6. guidance_scale
-                1,                                  // 7. guidance_scale_2
-                42,                                 // 8. seed
-                true,                               // 9. randomize_seed
+                faceBase64,
+                shapeBase64,
+                colorBase64,
+                'Article',  // 4. blending (Default)
+                0,          // 5. poisson_iters (Default)
+                15,         // 6. poisson_erosion (Default)
             ],
-            // Dodajemo session_hash jer ga Gradio API često zahtijeva
             "session_hash": "gradio_session_" + Math.random().toString(36).substring(2, 10) 
         };
         
@@ -79,47 +86,38 @@ app.post('/procesiraj-video', upload.single('slika'), async (req, res) => {
                 'Authorization': `Bearer ${HF_TOKEN}`, 
                 'Content-Type': 'application/json',
             },
-            timeout: 180000 // 3 minute timeout 
+            responseType: 'arraybuffer', // API vraća sliku, ne JSON!
+            timeout: 60000 // 60 sekundi za procesiranje slike
         });
 
-        // 4. PRIMANJE REZULTATA
-        // Gradio vraća JSON. data[0] je URL do videa, data[1] je seed.
-        const video_url = hfResponse.data.data[0];
-        const seed_used = hfResponse.data.data[1];
+        // 4. PRIMANJE REZULTATA (slika, ne video)
+        const mimeType = hfResponse.headers['content-type'] || 'image/png';
+        const base64Image = Buffer.from(hfResponse.data, 'binary').toString('base64');
         
         // 5. VRAĆANJE REZULTATA KLIJENTU
         res.json({
-            status: "Uspješno generirano! Video je spreman.",
-            video_url: video_url, 
-            seed: seed_used
+            status: "Uspješno generirano!",
+            slika_base64: `data:${mimeType};base64,${base64Image}` // Format za prikaz
         });
 
     } catch (error) {
-        // Logiranje greške
-        console.error("HF Error:", error.response ? error.response.data : error.message);
-        
-        // Slanje poruke o grešci natrag klijentu
+        console.error("HF Error:", error.response ? error.response.data.toString() : error.message);
         res.status(500).json({ 
-            error: 'Generiranje videa nije uspjelo.',
-            detalji: (error.response && error.response.data) 
-                ? (error.response.data.error || JSON.stringify(error.response.data)) 
-                : error.message 
+            error: 'Greška pri obradi frizure na Hugging Face API-ju.',
+            detalji: error.response ? error.response.data.toString() : error.message 
         });
         
     } finally {
-        // 6. ČIŠĆENJE: Brisanje privremene slike
-        try {
-            fs.unlinkSync(fajl.path); 
-        } catch (e) {
-             console.error("Greška pri brisanju fajla:", e);
-        }
+        // 6. ČIŠĆENJE: Brisanje svih privremenih fajlova
+        tempFilesToClean.forEach(fPath => {
+             try { fs.unlinkSync(fPath); } catch (e) {}
+        });
     }
 });
 
 
 // RUTA: Glavna ruta - Poslužuje HTML
 app.get('/', (req, res) => {
-    // Poslužuje index.html iz mape 'public'
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
