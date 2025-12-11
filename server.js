@@ -30,9 +30,11 @@ const upload = multer({ dest: 'uploads/' });
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json()); 
 
-// 🚨 ISPRAVKA 1: Vraća "" umjesto null za nepostojeće fajlove
+// 🚨 ISPRAVKA 1: Vraća null umjesto "" za nepostojeće fajlove
 const fileToBase64 = (file) => {
-    if (!file || !file.path) return ""; 
+    // Ako fajl ne postoji ili nema putanju, vrati null (što Gradio/Python očekuje za None)
+    if (!file || !file.path) return null; 
+    
     const fileContent = fs.readFileSync(file.path);
     const mimeType = file.mimetype;
     return `data:${mimeType};base64,${fileContent.toString('base64')}`;
@@ -50,15 +52,17 @@ app.post('/procesiraj-frizuru', upload.fields(imageFields), async (req, res) => 
 
     const { source, shape, color } = req.files;
     
+    // Provjera minimalnog uvjeta: Potrebno je LICE i BAREM JEDNA od frizura/boja.
     if (!source || source.length === 0 || (!shape && !color)) {
         return res.status(400).json({ error: 'Potrebna je slika lica (Source) i barem slika oblika (Shape) ili slika boje (Color).' });
     }
 
-    // Pretvorba fajlova u Base64 (koristeći ispravljenu funkciju koja vraća "")
+    // Pretvorba fajlova u Base64 (koristeći ispravljenu funkciju)
     const faceBase64 = fileToBase64(source[0]);
-    const shapeBase64 = shape && shape.length > 0 ? fileToBase64(shape[0]) : "";
-    const colorBase64 = color && color.length > 0 ? fileToBase64(color[0]) : "";
-
+    // Koristi se null ako fajl ne postoji
+    const shapeBase64 = shape && shape.length > 0 ? fileToBase64(shape[0]) : null;
+    const colorBase64 = color && color.length > 0 ? fileToBase64(color[0]) : null;
+    
     // Polje privremenih fajlova za čišćenje
     const tempFilesToClean = [source[0].path];
     if (shape && shape.length > 0) tempFilesToClean.push(shape[0].path);
@@ -69,8 +73,8 @@ app.post('/procesiraj-frizuru', upload.fields(imageFields), async (req, res) => 
             "fn_name": "swap_hair", 
             "data": [
                 faceBase64,
-                shapeBase64,
-                colorBase64,
+                shapeBase64, // Ovdje će biti Base64 ili null
+                colorBase64, // Ovdje će biti Base64 ili null
                 'Article',  
                 0,          
                 15,         
@@ -78,27 +82,24 @@ app.post('/procesiraj-frizuru', upload.fields(imageFields), async (req, res) => 
             "session_hash": "gradio_session_" + Math.random().toString(36).substring(2, 10) 
         };
         
-        // 3. SLANJE NA HUGGING FACE GRADIO API
         const hfResponse = await axios.post(HF_API_URL, gradioPayload, {
             headers: {
                 'Authorization': `Bearer ${HF_TOKEN}`, 
                 'Content-Type': 'application/json',
             },
-            // responseType: 'arraybuffer' je UKLONJEN jer očekujemo JSON
             timeout: 60000 
         });
 
-        // 🚨 ISPRAVKA 2: Vađenje Base64 stringa iz JSON odgovora
-        // Gradio API vraća Base64 string unutar JSON objekta
+        // Vađenje Base64 stringa iz JSON odgovora (Gradio V4 format)
         const resultData = hfResponse.data.data[0];
-        // Base64 slika je u "data" polju, a Gradio je već formatirao (data:image/...)
+        // Base64 slika je u "data" polju, formatirana kao data:image/...
         const finalImageBase64 = resultData && resultData.data ? resultData.data : null; 
 
         if (!finalImageBase64) {
             throw new Error('Gradio API nije vratio Base64 sliku u očekivanom formatu.');
         }
         
-        // 5. VRAĆANJE REZULTATA KLIJENTU
+        // VRAĆANJE REZULTATA KLIJENTU
         res.json({
             status: "Uspješno generirano!",
             slika_base64: finalImageBase64 
@@ -109,7 +110,12 @@ app.post('/procesiraj-frizuru', upload.fields(imageFields), async (req, res) => 
         let errorDetails = "Internal Server Error";
         if (error.response && error.response.data) {
              // Ako je error.response.data JSON (npr. Gradio greška), prikaži ga
-             errorDetails = JSON.stringify(error.response.data);
+             try {
+                errorDetails = JSON.stringify(error.response.data);
+             } catch (e) {
+                // Ako nije JSON, vrati cijeli odgovor kao string
+                errorDetails = error.response.data.toString();
+             }
         } else if (error.message) {
             errorDetails = error.message;
         }
@@ -122,7 +128,7 @@ app.post('/procesiraj-frizuru', upload.fields(imageFields), async (req, res) => 
         });
         
     } finally {
-        // 6. ČIŠĆENJE: Brisanje svih privremenih fajlova
+        // ČIŠĆENJE: Brisanje privremenih fajlova
         tempFilesToClean.forEach(fPath => {
              try { fs.unlinkSync(fPath); } catch (e) {}
         });
