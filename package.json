@@ -1,17 +1,16 @@
 {
   "name": "frizer-app-backend",
   "version": "1.0.0",
-  "description": "Backend proxy for Hugging Face Video Generation API.",
+  "description": "Proxy server for Hugging Face Inference API",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js"
   },
   "keywords": [
+    "node",
     "express",
-    "multer",
     "huggingface",
-    "video-generation"
+    "ai"
   ],
   "author": "",
   "license": "ISC",
