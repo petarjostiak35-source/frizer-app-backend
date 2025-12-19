@@ -1,0 +1,8 @@
+{
+  "name": "ArchiTech Portfolio",
+  "description": "A high-end, ultra-modern portfolio landing page with an Apple-meets-Linear aesthetic, featuring 3D interactive bento grids and custom cursor effects.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
