@@ -1,0 +1,12 @@
+{
+  "name": "securehub-ultra-nano",
+  "version": "1.0.0",
+  "description": "Gold Standard Insurance Landing Page",
+  "main": "index.html",
+  "scripts": {
+    "start": "serve ."
+  },
+  "dependencies": {
+    "serve": "^14.0.0"
+  }
+}
